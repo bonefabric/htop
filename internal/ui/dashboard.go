@@ -56,11 +56,15 @@ func formatBytes(bytes uint64) string {
 
 // Dashboard представляет главный экран приложения
 type Dashboard struct {
-	ui          UIProvider
-	cpuCharts   []*widgets.Gauge
-	memChart    *widgets.Gauge
-	processList *widgets.List
-	selectedRow int // Индекс выбранного процесса
+	ui            UIProvider
+	cpuCharts     []*widgets.Gauge
+	memChart      *widgets.Gauge
+	processList   *widgets.List
+	selectedRow   int // Индекс выбранного процесса
+	signalMenu    *widgets.List
+	showSignalMenu bool
+	selectedSignal int
+	processes     []system.ProcessInfo // Сохраняем список процессов
 }
 
 // NewDashboard создает новый экземпляр Dashboard
@@ -81,11 +85,14 @@ func NewDashboardWithUI(provider UIProvider) (*Dashboard, error) {
 	}
 
 	d := &Dashboard{
-		ui:          provider,
-		cpuCharts:   make([]*widgets.Gauge, counts),
-		memChart:    widgets.NewGauge(),
-		processList: widgets.NewList(),
-		selectedRow: 0,
+		ui:            provider,
+		cpuCharts:     make([]*widgets.Gauge, counts),
+		memChart:      widgets.NewGauge(),
+		processList:   widgets.NewList(),
+		selectedRow:   0,
+		signalMenu:    widgets.NewList(),
+		showSignalMenu: false,
+		selectedSignal: 0,
 	}
 
 	// Создаем и настраиваем индикаторы для каждого ядра
@@ -126,7 +133,7 @@ func NewDashboardWithUI(provider UIProvider) (*Dashboard, error) {
 	d.memChart.Label = "Initializing..." // Начальное значение
 
 	// Настройка списка процессов
-	d.processList.Title = "Processes (↑/↓ to navigate)"
+	d.processList.Title = "Processes (↑/↓ to navigate, → for signals)"
 	d.processList.SetRect(0, totalCPUHeight+3, 100, totalCPUHeight+17)
 	d.processList.BorderStyle.Fg = ui.ColorCyan
 	d.processList.TitleStyle.Fg = ui.ColorWhite
@@ -134,7 +141,41 @@ func NewDashboardWithUI(provider UIProvider) (*Dashboard, error) {
 	d.processList.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, ui.ColorGreen)
 	d.processList.WrapText = false
 
+	// Настройка меню сигналов
+	d.signalMenu.Title = "Send Signal (↑/↓ to select, Enter to send, ← to cancel)"
+	d.signalMenu.TextStyle = ui.NewStyle(ui.ColorWhite)
+	d.signalMenu.SelectedRowStyle = ui.NewStyle(ui.ColorBlack, ui.ColorYellow)
+	d.signalMenu.WrapText = false
+
+	// Заполняем список сигналов
+	signalTexts := make([]string, len(system.AvailableSignals))
+	for i, sig := range system.AvailableSignals {
+		signalTexts[i] = fmt.Sprintf("%s - %s", sig.Name, sig.Description)
+	}
+	d.signalMenu.Rows = signalTexts
+
 	return d, nil
+}
+
+// updateSignalMenuPosition обновляет позицию меню сигналов
+func (d *Dashboard) updateSignalMenuPosition() {
+	if !d.showSignalMenu {
+		return
+	}
+
+	// Получаем размеры списка процессов
+	rect := d.processList.GetRect()
+	menuWidth := 40
+	menuHeight := len(system.AvailableSignals) + 2 // +2 для рамки
+
+	// Располагаем меню справа от курсора
+	menuX1 := rect.Max.X - menuWidth
+	menuY1 := rect.Min.Y + d.selectedRow
+	if menuY1+menuHeight > rect.Min.Y+13 { // Если меню выходит за нижнюю границу
+		menuY1 = rect.Min.Y + 13 - menuHeight
+	}
+
+	d.signalMenu.SetRect(menuX1, menuY1, rect.Max.X, menuY1+menuHeight)
 }
 
 // getColorByPercent возвращает цвет в зависимости от процента загрузки
@@ -166,24 +207,72 @@ func (d *Dashboard) Run() error {
 		select {
 		case e := <-uiEvents:
 			if e.Type == ui.KeyboardEvent {
-				switch e.ID {
-				case "q", "<C-c>":
-					return nil
-				case "<Down>":
-					d.selectedRow++
-					if d.selectedRow >= len(d.processList.Rows) {
-						d.selectedRow = len(d.processList.Rows) - 1
+				if d.showSignalMenu {
+					// Обработка событий в меню сигналов
+					switch e.ID {
+					case "<Left>":
+						d.showSignalMenu = false
+						d.selectedSignal = 0
+					case "<Up>":
+						d.selectedSignal--
+						if d.selectedSignal < 0 {
+							d.selectedSignal = 0
+						}
+						d.signalMenu.SelectedRow = d.selectedSignal
+					case "<Down>":
+						d.selectedSignal++
+						if d.selectedSignal >= len(system.AvailableSignals) {
+							d.selectedSignal = len(system.AvailableSignals) - 1
+						}
+						d.signalMenu.SelectedRow = d.selectedSignal
+					case "<Enter>":
+						if len(d.processes) > d.selectedRow {
+							proc := d.processes[d.selectedRow]
+							sig := system.AvailableSignals[d.selectedSignal]
+							if err := system.SendSignal(proc.PID, sig.Signal); err != nil {
+								log.Printf("Failed to send signal %s to process %d: %v", 
+									sig.Name, proc.PID, err)
+							}
+						}
+						d.showSignalMenu = false
+						d.selectedSignal = 0
 					}
-					d.processList.ScrollDown()
-				case "<Up>":
-					d.selectedRow--
-					if d.selectedRow < 0 {
-						d.selectedRow = 0
+				} else {
+					// Обработка событий в основном интерфейсе
+					switch e.ID {
+					case "q", "<C-c>":
+						return nil
+					case "<Down>":
+						d.selectedRow++
+						if d.selectedRow >= len(d.processList.Rows) {
+							d.selectedRow = len(d.processList.Rows) - 1
+						}
+						d.processList.ScrollDown()
+					case "<Up>":
+						d.selectedRow--
+						if d.selectedRow < 0 {
+							d.selectedRow = 0
+						}
+						d.processList.ScrollUp()
+					case "<Right>":
+						d.showSignalMenu = true
+						d.selectedSignal = 0
+						d.signalMenu.SelectedRow = 0
 					}
-					d.processList.ScrollUp()
 				}
 				d.processList.SelectedRow = d.selectedRow
-				d.ui.Render(d.processList)
+				d.updateSignalMenuPosition()
+
+				// Рендерим все виджеты
+				drawables := make([]ui.Drawable, 0, len(d.cpuCharts)+3)
+				for _, chart := range d.cpuCharts {
+					drawables = append(drawables, chart)
+				}
+				drawables = append(drawables, d.memChart, d.processList)
+				if d.showSignalMenu {
+					drawables = append(drawables, d.signalMenu)
+				}
+				d.ui.Render(drawables...)
 			}
 		case <-ticker.C:
 			if err := d.update(); err != nil {
@@ -232,6 +321,7 @@ func (d *Dashboard) update() error {
 	if err != nil {
 		log.Printf("failed to get process list: %v", err)
 	} else {
+		d.processes = processes // Сохраняем список процессов
 		processTexts := make([]string, 0, len(processes))
 		for _, p := range processes {
 			processTexts = append(processTexts,
@@ -248,11 +338,15 @@ func (d *Dashboard) update() error {
 	}
 
 	// Рендерим все виджеты
-	drawables := make([]ui.Drawable, 0, len(d.cpuCharts)+2)
+	drawables := make([]ui.Drawable, 0, len(d.cpuCharts)+3)
 	for _, chart := range d.cpuCharts {
 		drawables = append(drawables, chart)
 	}
 	drawables = append(drawables, d.memChart, d.processList)
+	if d.showSignalMenu {
+		d.updateSignalMenuPosition()
+		drawables = append(drawables, d.signalMenu)
+	}
 	d.ui.Render(drawables...)
 
 	return nil
