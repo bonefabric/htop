@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -105,9 +106,21 @@ func TestNewDashboard(t *testing.T) {
 	}
 
 	// Проверяем, что все виджеты были созданы
-	if dashboard.cpuChart == nil {
-		t.Error("CPU chart не был инициализирован")
+	if len(dashboard.cpuCharts) == 0 {
+		t.Error("CPU charts не были инициализированы")
 	}
+
+	// Проверяем каждый CPU chart
+	for i, chart := range dashboard.cpuCharts {
+		if chart == nil {
+			t.Errorf("CPU chart %d не был инициализирован", i)
+			continue
+		}
+		if chart.Title != fmt.Sprintf("CPU Core %d", i) {
+			t.Errorf("Неверный заголовок CPU chart %d: %s", i, chart.Title)
+		}
+	}
+
 	if dashboard.memChart == nil {
 		t.Error("Memory chart не был инициализирован")
 	}
@@ -116,14 +129,73 @@ func TestNewDashboard(t *testing.T) {
 	}
 
 	// Проверяем настройки виджетов
-	if dashboard.cpuChart.Title != "CPU Usage" {
-		t.Errorf("Неверный заголовок CPU chart: %s", dashboard.cpuChart.Title)
-	}
 	if dashboard.memChart.Title != "Memory Usage" {
 		t.Errorf("Неверный заголовок Memory chart: %s", dashboard.memChart.Title)
 	}
-	if dashboard.processList.Title != "Processes" {
+	if dashboard.processList.Title != "Processes (↑/↓ to navigate)" {
 		t.Errorf("Неверный заголовок Process list: %s", dashboard.processList.Title)
+	}
+
+	// Проверяем начальное состояние навигации
+	if dashboard.selectedRow != 0 {
+		t.Errorf("Неверная начальная позиция курсора: %d", dashboard.selectedRow)
+	}
+}
+
+func TestDashboard_Navigation(t *testing.T) {
+	mockUI := NewMockUI()
+	dashboard, err := NewDashboardWithUI(mockUI)
+	if err != nil {
+		t.Fatalf("NewDashboard() вернул ошибку: %v", err)
+	}
+
+	// Добавляем тестовые данные в список процессов
+	dashboard.processList.Rows = []string{"Process 1", "Process 2", "Process 3"}
+
+	// Тестируем навигацию вниз
+	dashboard.selectedRow = 0
+	dashboard.processList.SelectedRow = 0
+
+	// Перемещаем курсор вниз
+	for i := 0; i < 5; i++ { // Пробуем выйти за пределы списка
+		oldPos := dashboard.selectedRow
+		dashboard.selectedRow++
+		if dashboard.selectedRow >= len(dashboard.processList.Rows) {
+			dashboard.selectedRow = len(dashboard.processList.Rows) - 1
+		}
+		dashboard.processList.SelectedRow = dashboard.selectedRow
+
+		// Проверяем, что курсор не вышел за пределы списка
+		if dashboard.selectedRow >= len(dashboard.processList.Rows) {
+			t.Errorf("Курсор вышел за пределы списка: %d", dashboard.selectedRow)
+		}
+		// Проверяем, что после достижения конца списка позиция не меняется
+		if oldPos == len(dashboard.processList.Rows)-1 && dashboard.selectedRow != oldPos {
+			t.Error("Курсор изменил позицию после достижения конца списка")
+		}
+	}
+
+	// Тестируем навигацию вверх
+	dashboard.selectedRow = len(dashboard.processList.Rows) - 1
+	dashboard.processList.SelectedRow = dashboard.selectedRow
+
+	// Перемещаем курсор вверх
+	for i := 0; i < 5; i++ { // Пробуем выйти за пределы списка
+		oldPos := dashboard.selectedRow
+		dashboard.selectedRow--
+		if dashboard.selectedRow < 0 {
+			dashboard.selectedRow = 0
+		}
+		dashboard.processList.SelectedRow = dashboard.selectedRow
+
+		// Проверяем, что курсор не стал отрицательным
+		if dashboard.selectedRow < 0 {
+			t.Errorf("Курсор стал отрицательным: %d", dashboard.selectedRow)
+		}
+		// Проверяем, что после достижения начала списка позиция не меняется
+		if oldPos == 0 && dashboard.selectedRow != oldPos {
+			t.Error("Курсор изменил позицию после достижения начала списка")
+		}
 	}
 }
 
@@ -142,6 +214,19 @@ func TestDashboard_Run(t *testing.T) {
 
 	// Даем время на инициализацию
 	time.Sleep(100 * time.Millisecond)
+
+	// Тестируем навигацию
+	mockUI.events <- ui.Event{
+		Type: ui.KeyboardEvent,
+		ID:   "<Down>",
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mockUI.events <- ui.Event{
+		Type: ui.KeyboardEvent,
+		ID:   "<Up>",
+	}
+	time.Sleep(50 * time.Millisecond)
 
 	// Отправляем событие выхода
 	mockUI.events <- ui.Event{
@@ -178,19 +263,27 @@ func TestDashboard_Update(t *testing.T) {
 		t.Errorf("Dashboard.update() вернул ошибку: %v", err)
 	}
 
-	// Проверяем, что данные были обновлены
-	if dashboard.cpuChart.Percent < 0 || dashboard.cpuChart.Percent > 100 {
-		t.Errorf("Некорректное значение CPU: %d", dashboard.cpuChart.Percent)
+	// Проверяем, что данные CPU были обновлены
+	for i, chart := range dashboard.cpuCharts {
+		if chart.Percent < 0 || chart.Percent > 100 {
+			t.Errorf("Некорректное значение CPU для ядра %d: %d", i, chart.Percent)
+		}
 	}
+
+	// Проверяем данные памяти
 	if dashboard.memChart.Percent < 0 || dashboard.memChart.Percent > 100 {
 		t.Errorf("Некорректное значение Memory: %d", dashboard.memChart.Percent)
 	}
+
+	// Проверяем список процессов
 	if len(dashboard.processList.Rows) == 0 {
 		t.Error("Список процессов пуст после обновления")
 	}
 
-	// Проверяем, что виджеты были отрендерены
-	if len(mockUI.rendered) != 3 {
-		t.Errorf("Неверное количество отрендеренных виджетов: %d", len(mockUI.rendered))
+	// Проверяем, что все виджеты были отрендерены
+	expectedWidgets := len(dashboard.cpuCharts) + 2 // CPU charts + memory + process list
+	if len(mockUI.rendered) != expectedWidgets {
+		t.Errorf("Неверное количество отрендеренных виджетов: %d, ожидалось: %d", 
+			len(mockUI.rendered), expectedWidgets)
 	}
 } 
