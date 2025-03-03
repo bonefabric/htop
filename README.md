@@ -1,4 +1,4 @@
-# THOP
+# github.com/bonefabric/htop
 
 Простая реализация системного монитора в стиле htop на Go.
 
@@ -29,7 +29,7 @@ go mod download
 ## Запуск
 
 ```bash
-go run cmd/thop/main.go
+go run github.com/bonefabric/htop/cmd/thop/main.go
 ```
 
 ## Управление
@@ -51,17 +51,6 @@ go test ./...
 go test ./... -cover
 ```
 
-### Покрытие тестами
-
-- `internal/system`: 92.9% - тесты для работы с системными процессами
-- `internal/ui`: 82.0% - тесты UI компонентов с использованием моков
-- `cmd/thop`: точка входа в приложение
-
-Тесты разделены на несколько категорий:
-- Модульные тесты (например, `TestGetColorByPercent`)
-- Интеграционные тесты (например, `TestMainIntegration`)
-- Тесты с таблицами данных (например, `TestProcessInfo_Validation`)
-
 ## Структура проекта
 
 ```
@@ -77,5 +66,5 @@ go test ./... -cover
 │       ├── process.go       # Работа с системными процессами
 │       └── process_test.go  # Тесты обработки процессов
 ├── go.mod                   # Управление зависимостями
-└── README.md               # Документация проекта
+└── README.md                # Документация проекта
 ```

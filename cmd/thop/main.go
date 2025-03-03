@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	"thop/internal/ui"
+	"github.com/bonefabric/htop/internal/ui"
 )
 
 func main() {

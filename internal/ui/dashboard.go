@@ -10,7 +10,7 @@ import (
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 
-	"thop/internal/system"
+	"github.com/bonefabric/htop/internal/system"
 )
 
 // UIProvider интерфейс для абстракции termui

@@ -1,4 +1,4 @@
-module thop
+module github.com/bonefabric/htop
 
 go 1.22
 
